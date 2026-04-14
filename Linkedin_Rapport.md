@@ -29,6 +29,7 @@ CREATE SCHEMA IF NOT EXISTS LINKEDIN.BRONZE;
 -- Configuration du Stage pour accéder aux fichiers S3
 CREATE OR REPLACE STAGE LINKEDIN.BRONZE.linkedin_stage
 URL = 's3://snowflake-lab-bucket/';
+```
 
 ## 2. Ingestion des Données Structurées (CSV)
 
