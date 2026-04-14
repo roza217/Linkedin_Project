@@ -33,4 +33,4 @@ URL = 's3://snowflake-lab-bucket/';
 
 ## 2. Ingestion des Données Structurées (CSV)
 
-Pour les fichiers CSV, nous créons des tables avec des colonnes typées en **STRING** pour assurer une ingestion fluide avant le nettoyage en phase Silver. 
+Pour les fichiers CSV, nous créons des tables avec des colonnes typées en `STRING` pour assurer une ingestion fluide avant le nettoyage en phase Silver. 
