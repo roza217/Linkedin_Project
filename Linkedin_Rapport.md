@@ -28,23 +28,4 @@ CREATE SCHEMA IF NOT EXISTS LINKEDIN.BRONZE;
 
 -- Configuration du Stage pour accéder aux fichiers S3
 CREATE OR REPLACE STAGE LINKEDIN.BRONZE.linkedin_stage
-URL = 's3://snowflake-lab-bucket/';
-
--- Exemple : Table principale Job Postings
-CREATE TABLE IF NOT EXISTS LINKEDIN.BRONZE.JOB_POSTINGS (
-    job_id STRING, company_name STRING, title STRING, 
-    description STRING, max_salary STRING, med_salary STRING,
-    min_salary STRING, pay_period STRING, formatted_work_type STRING,
-    location STRING, applies STRING, original_listed_time STRING,
-    remote_allowed STRING, views STRING, job_posting_url STRING,
-    application_url STRING, application_type STRING, expiry STRING,
-    closed_time STRING, formatted_experience_level STRING,
-    skills_desc STRING, listed_time STRING, posting_domain STRING,
-    sponsored STRING, work_type STRING, currency STRING,
-    compensation_type STRING
-);
-
--- Chargement des données
-COPY INTO LINKEDIN.BRONZE.JOB_POSTINGS
-FROM @LINKEDIN.BRONZE.linkedin_stage/job_postings.csv 
-FILE_FORMAT = (TYPE = 'CSV' SKIP_HEADER = 1 FIELD_OPTIONALLY_ENCLOSED_BY = '"');
+URL = 's3://snowflake-lab-bucket/';```
