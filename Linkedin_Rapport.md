@@ -859,8 +859,7 @@ Ce modèle sépare clairement les **Faits** (les transactions mesurables, comme 
 
 * **Évolutivité** : L'ajout de nouvelles dimensions (ex: Géographie détaillée ou Compétences) peut se faire sans reconstruire la table de faits centrale."*
 
-
-
+![Modèle de données](./shema_etoile.png)
 
 ## 📊 3. Analyses Métiers et Résultats
 
