@@ -6,7 +6,7 @@ Dans un marché de l'emploi dynamique, l'analyse des données de plateformes com
 L'objectif est de transformer des milliers de lignes de données non traitées en **insights exploitables** pour identifier les secteurs porteurs et les structures de rémunération.
 
 ## 🏗️ Architecture Technique : Le Modèle Medallion
-J'ai implémenté une architecture **Medallion** pour garantir la qualité et la traçabilité des données :
+On a implémenté une architecture **Medallion** pour garantir la qualité et la traçabilité des données :
 
 1.  **Bronze (Raw) :** Ingestion des données brutes depuis un stockage S3 vers Snowflake.
 2.  **Silver (Cleaned) :** Nettoyage, dédoublonnage et typage des données.
@@ -250,7 +250,7 @@ Le projet utilise plusieurs fichiers **JSON** (Companies, Industries, Specialiti
 
 ## 3. Transformation des 8 Tables Silver
 
-### 3.1 Table `JOB_POSTINGS` (Table Centrale)
+### 3.1. Table `JOB_POSTINGS` (Table Centrale)
 
 **Rôle** : Centralise toutes les offres d'emploi avec leurs attributs principaux.
 
@@ -336,7 +336,7 @@ SELECT * FROM LINKEDIN.SILVER.JOB_POSTINGS ;
 
 Une vérification a été notée concernant le champ company_name source qui semble contenir des identifiants numériques, d'où le cast en BIGINT pour assurer la cohérence des jointures avec la table des entreprises.
 
-### 3.2 Table `COMPANIES` (Référentiel Entreprises)
+### 3.2. Table `COMPANIES` (Référentiel Entreprises)
 
 **Rôle** : Informations descriptives des organisations.
 
@@ -417,7 +417,11 @@ Le script traite un problème majeur identifié lors de l'exploration : la prés
 
 **Dimensionnement** : Le champ `company_size` est casté en `INT`, permettant ainsi de réaliser des tris ou des groupements par taille d'entreprise (ex: PME vs Grandes Entreprises).
 
-### 3.3 Table `BENEFITS`  
+**Note Technique**
+
+"Nous avons particulièrement mis l'accent sur la gestion des colonnes géographiques. La présence de valeurs telles que '`0`' ou '`OO`' dans la source JSON aurait faussé toute tentative de cartographie des entreprises. Le nettoyage par `CASE WHEN` assure l'intégrité de notre référentiel de localisation."
+
+### 3.3. Table `BENEFITS`  
 
 **Rôle** : Liste les avantages liés à chaque offre (assurance, mutuelle, etc.).
 
@@ -468,7 +472,7 @@ Ce script traite la table des avantages (avantages sociaux, mutuelle, bonus, etc
 
 * **Justification** : Le mot `type` est souvent un mot réservé en SQL ou peut porter à confusion. Le renommer en `benefit_type` apporte une meilleure clarté sémantique pour les utilisateurs de la couche Silver.
 
-### 3.4 Table `EMPLOYEE_COUNTS` 
+### 3.4. Table `EMPLOYEE_COUNTS` 
 
 **Rôle** : Historique du nombre d'employés et de followers.
 
@@ -540,10 +544,208 @@ La gestion de la colonne `recorded_at` représente l'aspect le plus technique du
 
 * **Impact** : Cela assure une jointure parfaite avec la table `COMPANIES` déjà traitée, permettant de croiser le secteur d'activité avec l'évolution du nombre d'employés.
 
+### 3.5. Table `JOB_SKILLS`
+
+**Rôle** : Mapping des compétences nécessaires par poste.
+
+```sql
+------------- Transformation de JOB_SKILLS avec enrichissement (Bronze -> Silver)
+CREATE OR REPLACE TABLE LINKEDIN.SILVER.JOB_SKILLS AS
+SELECT
+    job_id::BIGINT AS job_id,
+    skill_abr,
+    CASE UPPER(TRIM(skill_abr))
+        -- la liste des abreviation des nom des skills-------------------------
+        WHEN 'HCPR' THEN 'Health Care Provider'
+        WHEN 'FIN'  THEN 'Finance'
+        WHEN 'ACCT' THEN 'Accounting'
+        WHEN 'CUST' THEN 'Customer Service'
+        WHEN 'SALE' THEN 'Sales'
+        WHEN 'PRJM' THEN 'Project Management'
+        WHEN 'MNFC' THEN 'Manufacturing'
+        WHEN 'PROD' THEN 'Production'
+        WHEN 'QA'   THEN 'Quality Assurance'
+        WHEN 'IT'   THEN 'Information Technology'
+        WHEN 'ENG'  THEN 'Engineering'
+        WHEN 'MGMT' THEN 'Management'
+        WHEN 'BD'   THEN 'Business Development'
+        WHEN 'ADM'  THEN 'Administration'
+        WHEN 'LGL'  THEN 'Legal'
+        WHEN 'CNSL' THEN 'Consulting'
+        WHEN 'MRKT' THEN 'Marketing'
+        WHEN 'STRA' THEN 'Strategy'
+        WHEN 'GENB' THEN 'General Business'
+        WHEN 'RSCH' THEN 'Research'
+        WHEN 'DSGN' THEN 'Design'
+        WHEN 'ART'  THEN 'Art'
+        WHEN 'EDU'  THEN 'Education'
+        WHEN 'TRNG' THEN 'Training'
+        WHEN 'ADVR' THEN 'Advertising'
+        WHEN 'ANLS' THEN 'Analysis'
+        WHEN 'DIST' THEN 'Distribution'
+        WHEN 'PR'   THEN 'Public Relations'
+        WHEN 'PRCH' THEN 'Purchasing'
+        WHEN 'PRDM' THEN 'Product Management'
+        WHEN 'HR'   THEN 'Human Resources'
+        WHEN 'SCI'  THEN 'Science'
+        WHEN 'SUPL' THEN 'Supply Chain'
+        WHEN 'WRT'  THEN 'Writing'
+        WHEN 'OTHR' THEN 'Other'
+        ELSE skill_abr 
+    END AS skill_name
+FROM LINKEDIN.BRONZE.JOB_SKILLS;
+
+--------AFichage des donnée d'abreviation qu'une seul fois
+SELECT DISTINCT skill_name FROM LINKEDIN.SILVER.JOB_SKILLS ORDER BY 1;
+
+--------Affichage de la table complète
+SELECT * FROM LINKEDIN.SILVER.JOB_SKILLS
+```
+
+Ce script transforme une table de jonction technique (utilisant des codes abrégés) en une table métier compréhensible. L'objectif est de convertir les abréviations de compétences (ex: `PRJM`, `IT`) en libellés complets (ex: `Project Management`, `Information` `Technology`) pour faciliter la lecture des rapports et des tableaux de bord par les recruteurs ou les candidats.
+
+#### A. Intégrité des Types et Performance
+
+`job_id::BIGINT AS job_id`
+
+Comme pour les tables précédentes, le maintien du type `BIGINT` assure la cohérence du modèle relationnel. Cela permet des jointures ultra-rapides entre les offres d'emploi et leurs compétences respectives.
+
+#### B. Traduction et Normalisation (Mapping Table)
+
+L'utilisation de la structure `CASE UPPER(TRIM(skill_abr))` est une technique d'enrichissement "Hard-coded" très efficace ici :
+
+* **Normalisation** : Le `UPPER(TRIM(...))` garantit que la correspondance se fait correctement, même si la donnée source contient des espaces ou des variations de casse.
+
+* **Lisibilité** : En remplaçant les acronymes par des noms complets, on élimine l'ambiguïté (ex: `PR` pourrait être "Public Relations" ou "Purchase", ici il est clairement défini).
+
+#### C. Gestion du "Fallback" (Sécurité)
+
+`ELSE skill_abr`
+
+* **Logique** : Si un nouveau code apparaît dans la table Bronze qui n'est pas encore listé dans le script, le système ne plante pas et ne renvoie pas de valeur vide. Il conserve l'abréviation originale.
+
+* **Valeur ajoutée** : Cela permet aux analystes de repérer facilement les nouveaux codes à ajouter ultérieurement dans la logique métier.
+
+#### 3.6. Table `JOB_INDUSTRIES` 
+
+**Rôle**: Table de liaison pour les analyses sectorielles.
+
+```sql
+-------- Transformation de JOB_INDUSTRIES (Bronze JSON -> Silver Table)
+CREATE OR REPLACE TABLE LINKEDIN.SILVER.JOB_INDUSTRIES AS
+SELECT
+    value:job_id::BIGINT AS job_id,
+    value:industry_id::INT AS industry_id
+FROM 
+    LINKEDIN.BRONZE.JOB_INDUSTRIES,
+    LATERAL FLATTEN(input => data);
+
+-------- Affichage
+SELECT * FROM LINKEDIN.SILVER.JOB_INDUSTRIES LIMIT 10;
+```
+
+Ce script a pour but de décomposer les données JSON pour créer une table de correspondance entre les offres d'emploi (`job_id`) et les secteurs d'activité (`industry_id`). Une offre d'emploi pouvant appartenir à plusieurs industries, ce script est essentiel pour la granularité de l'analyse
 
 
+#### A. Désérialisation Dynamique (Lateral Flatten)
 
+`LATERAL FLATTEN(input => data)`
 
+* **Mécanisme** : Comme pour la table `COMPANIES`, cette fonction est utilisée ici pour transformer chaque entrée du tableau JSON `data` en une ligne SQL distincte.
+
+* **Performance** : C'est la méthode la plus efficace pour traiter des listes de clés-valeurs imbriquées, car elle évite des boucles complexes et permet un traitement massivement parallèle.
+
+#### B. Typage des Clés de Jointure
+
+* `job_id::BIGINT` : Assure une cohérence stricte avec la table principale `JOB_POSTINGS`. Le choix du `BIGINT` est crucial ici car LinkedIn gère des millions d'offres, dépassant les limites d'un entier standard.
+
+* `industry_id::INT` : L'identifiant de l'industrie est casté en `INTEGER`. C'est un type de donnée léger et optimal pour servir de clé étrangère vers une future table de référence des noms d'industries.
+
+### 3.7. Table COMPANY_SPECIALITIES
+
+**Rôle** : Domaines d'expertise spécifiques par entreprise.
+
+```sql
+-------- Transformation de COMPANY_SPECIALITIES (Bronze JSON -> Silver Table)
+CREATE OR REPLACE TABLE LINKEDIN.SILVER.COMPANY_SPECIALITIES AS
+SELECT
+    /* Identifiant de l'entreprise */
+    NULLIF(TRIM(value:company_id::STRING), 'null')::BIGINT AS company_id,
+
+    /* Spécialité avec la première lettre en majuscule et nettoyage */
+    INITCAP(TRIM(value:speciality::STRING)) AS speciality
+
+FROM 
+    LINKEDIN.BRONZE.COMPANY_SPECIALITIES,
+    LATERAL FLATTEN(input => data);
+
+-------- Affichage
+SELECT * FROM LINKEDIN.SILVER.COMPANY_SPECIALITIES LIMIT 10;
+```
+Ce script extrait les expertises spécifiques (ex: "Cloud Computing", "AI", "Retail Design") associées à chaque entreprise. Contrairement aux secteurs d'activité (Industries), les spécialités offrent une vision beaucoup plus granulaire de ce que fait réellement une entreprise. L'objectif est de transformer un tableau de chaînes de caractères JSON en une liste SQL propre et formatée.
+
+#### A. Désérialisation et Granularité
+
+`LATERAL FLATTEN(input => data)`
+
+* **Logique** : Les entreprises listent souvent entre 5 et 20 spécialités dans un seul champ JSON. Le `FLATTEN` permet de créer une ligne par spécialité.
+
+* **Impact** : Cela permet de compter précisément combien d'entreprises se spécialisent dans un domaine précis, ce qui serait impossible si les données restaient groupées dans le JSON.
+
+#### B. Standardisation Textuelle (Data Formatting)
+
+`INITCAP(TRIM(value:speciality::STRING))`
+
+C'est la valeur ajoutée "Qualité" de ce script :
+
+* `TRIM` : Supprime les espaces accidentels en début ou fin de chaîne.
+
+* `INITCAP` : Transforme le texte pour que chaque mot commence par une majuscule.
+
+* **Avantage** : Cela garantit l'uniformité visuelle dans les futurs rapports Power BI ou dashboards, évitant d'avoir des doublons visuels dus à une mauvaise casse.
+
+#### C. Sécurité des Identifiants
+
+`NULLIF(TRIM(...), 'null')::BIGINT`
+
+* Le script s'assure que l'identifiant de l'entreprise est sain avant de le convertir en `BIGINT`, garantissant ainsi la fiabilité des jointures avec la table mère `COMPANIES`.
+
+### 3.8. Table `COMPANY_INDUSTRIES` 
+
+**Rôle** : Libellés des secteurs d'activité par entreprise.
+
+```sql
+-------- Transformation de COMPANY_INDUSTRIES (Bronze JSON -> Silver Table)
+CREATE OR REPLACE TABLE LINKEDIN.SILVER.COMPANY_INDUSTRIES AS
+SELECT
+    value:company_id::BIGINT AS company_id,
+    value:industry::STRING AS industry_name
+FROM 
+    LINKEDIN.BRONZE.COMPANY_INDUSTRIES,
+    LATERAL FLATTEN(input => data);
+
+--------Affichage 
+SELECT * FROM LINKEDIN.SILVER.COMPANY_INDUSTRIES LIMIT 10;
+```
+Ce script a pour but de normaliser l'appartenance sectorielle des entreprises. Alors que la table `JOB_INDUSTRIES` lie une **annonce** à un secteur, `COMPANY_INDUSTRIES` définit l'**identité** même de l'entreprise. L'objectif technique est d'extraire ces étiquettes sectorielles du format JSON pour permettre des analyses macro-économiques (ex: répartition des entreprises par secteur).
+
+#### A. Extraction de données semi-structurées
+
+`LATERAL FLATTEN(input => data)`
+
+* **Logique** : Le script traite le champ `data` qui contient souvent une liste de secteurs pour une seule entreprise. En utilisant le `FLATTEN`, on "horizontalise" la donnée : une entreprise présente dans plusieurs secteurs.
+
+* **Avantage** : Cela permet une agrégation précise dans les outils de BI (comptage exact du nombre d'entreprises par secteur).
+
+#### B. Typage et Cohérence Relationnelle
+
+* `value:company_id::BIGINT` : L'identifiant est casté en `BIGINT` pour s'aligner sur la table maîtresse `COMPANIES`. Cette rigueur garantit l'intégrité des jointures et évite les erreurs de type lors de la construction du modèle de données final (Gold Layer).
+
+* `value:industry::STRING` : Le nom du secteur est extrait en tant que chaîne de caractères.
+
+#### C. Simplicité et Efficacité
+
+Le script reste minimaliste mais performant. Contrairement à d'autres tables où des IDs étaient utilisés, ici on extrait directement le `industry_name`, ce qui permet une lecture immédiate de la donnée sans nécessiter de jointure supplémentaire avec une table de référence pour obtenir les noms.
 
 
 
