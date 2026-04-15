@@ -321,7 +321,21 @@ FROM LINKEDIN.BRONZE.JOB_POSTINGS;
 SELECT * FROM LINKEDIN.SILVER.JOB_POSTINGS ;
 ```
 
+* Le script nettoie les IDs et les force en format numérique (`BIGINT`).
+* **Enrichissement : Détection de la Langue** : Utilisation de `Regex` (expressions régulières) pour identifier les plages de caractères Unicode.
 
+    **Explication** : « Lors de l'exploration initiale des données, nous avons identifié une forte hétérogénéité dans l'origine des offres d'emploi, incluant des titres rédigés en caractères non-latins (Chinois, Japonais, Arabe, Cyrillique) ou composés exclusivement de symboles et de codes numériques. Afin de garantir la pertinence des analyses textuelles ultérieures, nous avons implémenté un script de détection basé sur les plages Unicode via des expressions régulières (Regex). Ce traitement permet d'isoler les titres "Latins/Anglais" des autres systèmes d'écriture et des caractères spéciaux, facilitant ainsi le nettoyage de la colonne et permettant une segmentation précise du marché de l'emploi par zone linguistique. »
+  
+    **Utilité** : Cela permet de segmenter les offres d'emploi par titre de poste les plus publier sans avoir besoin d'une API externe de traduction.
+
+* Conversion des salaires en `FLOAT` pour permettre des calculs mathématiques (moyennes, médianes).
+* **Gestion des Dates (Time Extraction)** : LinkedIn stocke souvent ses dates en **millisecondes** (Epoch Unix).
+
+     **Logique** : On divise par 1000 pour obtenir des secondes, puis on utilise `TO_TIMESTAMP_NTZ` (No Time Zone) pour transformer ce chiffre en une date lisible.
+
+**Note Technique**
+
+Une vérification a été notée concernant le champ company_name source qui semble contenir des identifiants numériques, d'où le cast en BIGINT pour assurer la cohérence des jointures avec la table des entreprises.
 
 
 
