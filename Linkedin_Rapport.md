@@ -417,6 +417,33 @@ Le script traite un problème majeur identifié lors de l'exploration : la prés
 
 **Dimensionnement** : Le champ `company_size` est casté en `INT`, permettant ainsi de réaliser des tris ou des groupements par taille d'entreprise (ex: PME vs Grandes Entreprises).
 
+### 3.3 Table `BENEFITS` (Avantages) 
+
+**Rôle** : Liste les avantages liés à chaque offre (assurance, mutuelle, etc.).
+
+```sql
+-- Transformation de BENEFITS (Bronze -> Silver)-
+CREATE OR REPLACE TABLE LINKEDIN.SILVER.BENEFITS AS
+SELECT
+    -- Conversion de l'ID du job en BIGINT pour la cohérence avec JOBPOSTINGS_CLEAN
+    job_id::BIGINT AS job_id,
+    
+    -- Conversion de la colonne INFERRED en BOOLEAN
+    -- (0 devient FALSE, 1 devient TRUE)
+    CASE 
+        WHEN inferred = '1' THEN TRUE 
+        ELSE FALSE 
+    END AS is_inferred,
+    
+    -- On garde le type d'avantage tel quel (STRING)
+    type AS benefit_type
+FROM LINKEDIN.BRONZE.BENEFITS;
+
+-- Affichage
+SELECT * FROM LINKEDIN.SILVER.BENEFITS LIMIT 10;
+```
+
+
 
 
 
