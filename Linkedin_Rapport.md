@@ -212,7 +212,7 @@ CREATE SCHEMA IF NOT EXISTS LINKEDIN.SILVER;
 SHOW SCHEMAS IN DATABASE LINKEDIN;
 ```
 
-## 2. Stratégie Globale de Nettoyage (Phase SILVER)
+## 2. Stratégie Globale de Nettoyage (SILVER)
 
 La transition de la couche **BRONZE** vers la couche **SILVER** ne se limite pas à un simple copier-coller. Elle repose sur une architecture de nettoyage en 4 piliers majeurs pour garantir que chaque donnée est **fiable**, **typée** et **cohérente**.
 
@@ -227,8 +227,7 @@ Les données brutes de LinkedIn contiennent souvent du "bruit" lié à la saisie
 ### 2. Fiabilisation Temporelle (Time Intelligence)
 
 L'un des plus grands défis de ce projet a été la gestion des dates et leur conversion depuis les données sources.
-
-* **Le problème de l'an 1970 :** Les dates LinkedIn sont souvent extraites au format "Unix Epoch" (en millisecondes). Une conversion directe sans vérification préalable générait systématiquement des dates erronées calées sur l'année 1970.
+* **Problématique :** LinkedIn stocke souvent ses dates en millisecondes (Epoch Unix).
 * **La Solution :** Mise en place d'une logique de détection automatique d'unité de temps :
     * Si la valeur est $> 10^{12}$, nous divisons par 1000 pour convertir les millisecondes en secondes.
     * Sinon, la valeur est traitée directement comme des secondes.
@@ -337,10 +336,86 @@ SELECT * FROM LINKEDIN.SILVER.JOB_POSTINGS ;
 
 Une vérification a été notée concernant le champ company_name source qui semble contenir des identifiants numériques, d'où le cast en BIGINT pour assurer la cohérence des jointures avec la table des entreprises.
 
+### 3.2 Table `COMPANIES` (Référentiel Entreprises)
 
+**Rôle** : Informations descriptives des organisations.
 
+```sql
+-- Transformation de COMPANIES (Bronze JSON -> Silver Table)
+CREATE OR REPLACE TABLE LINKEDIN.SILVER.COMPANIES AS
+SELECT
 
+    NULLIF(TRIM(value:company_id::STRING), 'null')::BIGINT AS company_id,
 
+------- INFORMATIONS ENTREPRISE
+
+    NULLIF(TRIM(value:name::STRING), '') AS company_name,
+    NULLIF(TRIM(value:description::STRING), '') AS description,
+
+--------- TAILLE ENTREPRISE
+
+    NULLIF(TRIM(value:company_size::STRING), 'null')::INT AS company_size,
+
+-------- LOCALISATION (NETTOYAGE DES VALEURS PAR DÉFAUT '0' OU 'OO')
+
+    CASE 
+        WHEN TRIM(value:state::STRING) IN ('0', 'null', '') THEN NULL 
+        ELSE TRIM(value:state::STRING) 
+    END AS state,
+
+    CASE 
+        WHEN TRIM(value:country::STRING) IN ('0', 'OO', 'null', '') THEN NULL 
+        ELSE TRIM(value:country::STRING) 
+    END AS country,
+
+    CASE 
+        WHEN TRIM(value:city::STRING) IN ('0', 'null', '') THEN NULL 
+        ELSE TRIM(value:city::STRING) 
+    END AS city,
+
+    CASE 
+        WHEN TRIM(value:zip_code::STRING) IN ('0', 'null', '') THEN NULL 
+        ELSE TRIM(value:zip_code::STRING) 
+    END AS zip_code,
+
+    CASE 
+        WHEN TRIM(value:address::STRING) IN ('', '-', '0', 'null') THEN NULL 
+        ELSE TRIM(value:address::STRING) 
+    END AS address,
+
+------- URL LINKEDIN
+    NULLIF(TRIM(value:url::STRING), '') AS linkedin_url
+
+FROM LINKEDIN.BRONZE.COMPANIES,
+     LATERAL FLATTEN(input => data);
+
+-------AFfichage 
+SELECT * FROM LINKEDIN.SILVER.COMPANIES LIMIT 10;
+```
+Ce script a pour mission d'extraire des données encapsulées dans un objet JSON complexe (`data`) pour les transformer en une table structurée et nettoyée.
+
+#### A. Désérialisation du JSON (Flattening)
+
+Le point critique de ce script est l'utilisation de la clause :
+`LATERAL FLATTEN(input => data)`
+
+**Logique** : Cette fonction Snowflake (ou équivalent) permet de "déplier" le tableau JSON contenu dans la colonne `data`. Chaque élément de la liste JSON devient une ligne distincte dans la table de sortie.
+
+**Extraction** : L'utilisation de l'opérateur `value:champ::STRING` permet de mapper les clés JSON directement vers des colonnes SQL.
+
+#### B. Normalisation de la Géographie (Data Quality)
+
+Le script traite un problème majeur identifié lors de l'exploration : la présence de **valeurs "placeholder"** (valeurs de remplissage sans sens).
+
+* **Traitement des anomalies** : Le script utilise des blocs `CASE WHEN` pour transformer les valeurs aberrantes comme `'0'`, `'OO'`, ou `'-'` en véritables `NULL`.
+
+* **Rigueur** : Cette étape est cruciale pour éviter de fausser les analyses géographiques (par exemple, éviter de comptabiliser une ville nommée "0").
+
+#### C. Intégrité des Identifiants et Dimensions
+
+**Casting de l'ID** : Le `company_id` est extrait du JSON, nettoyé, puis casté en `BIGINT`. Cela garantit que la clé primaire de la table est performante pour les futures jointures avec la table `JOB_POSTINGS`.
+
+**Dimensionnement** : Le champ `company_size` est casté en `INT`, permettant ainsi de réaliser des tris ou des groupements par taille d'entreprise (ex: PME vs Grandes Entreprises).
 
 
 
