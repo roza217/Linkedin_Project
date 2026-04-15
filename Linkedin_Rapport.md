@@ -747,5 +747,123 @@ Ce script a pour but de normaliser l'appartenance sectorielle des entreprises. A
 
 Le script reste minimaliste mais performant. Contrairement à d'autres tables où des IDs étaient utilisés, ici on extrait directement le `industry_name`, ce qui permet une lecture immédiate de la donnée sans nécessiter de jointure supplémentaire avec une table de référence pour obtenir les noms.
 
+# 🥇 Phase 3 : Modélisation et Analyses Décisionnelles (Couche GOLD)
+
+La couche Gold constitue l'étape finale du pipeline de données. Elle transforme les données nettoyées de la couche Silver en un modèle en étoile (Star Schema) optimisé pour la performance analytique et l'interrogation par des outils de BI ou d'IA (Cortex Analyst).
+
+## 🏗️ 1. Architecture de l'Environnement et Infrastructure
+
+Nous avons commencé par isoler les tables analytiques dans un schéma dédié et configurer un entrepôt de données (Warehouse) optimisé pour le calcul et la maîtrise des coûts.
+
+```sql
+-------- Création du Schéma Gold
+CREATE SCHEMA IF NOT EXISTS LINKEDIN.GOLD;
+
+-------- Configuration du Warehouse pour la performance et le coût
+CREATE OR REPLACE WAREHOUSE SMALL_COMPUTE_WH WITH
+    COMMENT = 'Large warehouse for cortex analyst'
+    WAREHOUSE_TYPE = 'standard'
+    WAREHOUSE_SIZE = 'small'
+    MIN_CLUSTER_COUNT = 1
+    MAX_CLUSTER_COUNT = 2
+    SCALING_POLICY = 'standard'
+    AUTO_SUSPEND = 60
+    AUTO_RESUME = true
+    INITIALLY_SUSPENDED = true;
+
+-------- Utilisation de WAREHOUSE
+USE WAREHOUSE SMALL_COMPUTE_WH;
+```
+
+## 📐 2. Modélisation en Étoile (Star Schema)
+
+Le modèle a été décomposé en tables de **Dimensions** (contexte) et une table de **Faits** (mesures), permettant des jointures rapides et une lecture simplifiée.
+
+### A. Tables de Dimensions
+
+Les dimensions permettent de filtrer les offres par métier, entreprise ou secteur.
+
+```sql
+-- creation de la table Dimension JOB : Caractéristiques de l'offre
+CREATE OR REPLACE TABLE LINKEDIN.GOLD.DIM_JOB AS
+SELECT DISTINCT
+    JOB_ID,
+    TITLE,
+    EXPERIENCE_LEVEL,
+    FORMATTED_WORK_TYPE,
+    IS_REMOTE
+FROM LINKEDIN.SILVER.JOB_POSTINGS;
+
+-- Affichage 
+select * from LINKEDIN.GOLD.DIM_JOB;
+
+-- creation de la table Dimension COMPANY : Référentiel des entreprises
+CREATE OR REPLACE TABLE LINKEDIN.GOLD.DIM_COMPANY AS
+SELECT DISTINCT
+    COMPANY_ID,
+    COMPANY_NAME,
+    COMPANY_SIZE,
+    STATE AS LOCATION_STATE
+FROM LINKEDIN.SILVER.COMPANIES;
+
+-- Affichage 
+select * from LINKEDIN.GOLD.DIM_COMPANY;
+
+-- creation de la table Dimension INDUSTRY
+CREATE OR REPLACE TABLE LINKEDIN.GOLDE.DIM_INDUSTRY AS
+SELECT
+    ROW_NUMBER() OVER (ORDER BY INDUSTRY_NAME) AS INDUSTRY_ID,
+    INDUSTRY_NAME
+FROM (
+    SELECT DISTINCT INDUSTRY_NAME
+    FROM LINKEDIN.SILVER.COMPANY_INDUSTRIES
+     )
+WHERE INDUSTRY_NAME IS NOT NULL;
+
+-- Gestion des données manquantes
+INSERT INTO LINKEDIN.GOLD.DIM_INDUSTRY (INDUSTRY_ID, INDUSTRY_NAME)
+VALUES (0, 'UNKNOWN');
+
+-- Affichage 
+select * from LINKEDIN.GOLD.DIM_INDUSTRY;
+```
+
+### B. Table de Faits
+
+La table de faits centralise les clés étrangères et les indicateurs de performance (KPIs) comme les salaires.
+
+```sql
+CREATE OR REPLACE TABLE LINKEDIN.GOLD.FACT_JOB_POSTINGS AS
+SELECT 
+    j.job_id,
+    j.language_category,
+    j.max_salary,
+    j.min_salary,
+    j.currency,
+    j.listed_at,
+    COALESCE(di.industry_id, 0) AS industry_id,
+    j.company_id
+FROM LINKEDIN.SILVER.JOB_POSTINGS j
+LEFT JOIN LINKEDIN.SILVER.COMPANY_INDUSTRIES ci ON j.company_id = ci.company_id
+LEFT JOIN LINKEDIN.GOLD.DIM_INDUSTRY di ON ci.industry_name = di.industry_name;
+```
+### C. Architecture du Schéma en Étoile (Star Schema)
+
+La figure ci-dessus illustre la modélisation décisionnelle implémentée dans la couche **Gold** de notre Data Warehouse Snowflake. Nous avons opté pour un **schéma en étoile (Star Schema)**, standard industriel pour la Business Intelligence.
+
+Ce modèle sépare clairement les **Faits** (les transactions mesurables, comme les offres d'emploi et les salaires) des **Dimensions** (le contexte descriptif, comme le secteur, l'entreprise, le type d'emploi ou le temps).
+
+* **Performance** : Les jointures reposent sur des clés numériques (IDs), optimisant la vitesse de calcul de Snowflake pour un affichage fluide des graphiques.
+
+* **Intégrité** : La gestion des valeurs manquantes (NULL) est centralisée (ex: ID 0 pour la catégorie 'UNKNOWN' dans DIM_INDUSTRY).
+
+* **Évolutivité** : L'ajout de nouvelles dimensions (ex: Géographie détaillée ou Compétences) peut se faire sans reconstruire la table de faits centrale."*
+
+
+
+
+## 📊 3. Analyses Métiers et Résultats
+
+Nous avons généré les tables analytiques pour répondre aux 5 questions stratégiques du projet, plus des analyses géographiques et organisationnelles supplémentaires.
 
 
