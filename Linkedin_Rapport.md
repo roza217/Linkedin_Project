@@ -128,7 +128,7 @@ FILE_FORMAT = (TYPE = 'CSV' SKIP_HEADER = 1 FIELD_OPTIONALLY_ENCLOSED_BY = '"');
 select * from LINKEDIN.BRONZE.job_skills;
 ```
 
-* Note technique : L'utilisation de `FIELD_OPTIONALLY_ENCLOSED_BY = '"'` est essentielle ici car les descriptions d'emploi sur LinkedIn contiennent souvent des virgules qui pourraient fausser la délimitation des colonnes.
+* **Note technique :** L'utilisation de `FIELD_OPTIONALLY_ENCLOSED_BY = '"'` est essentielle ici car les descriptions d'emploi sur LinkedIn contiennent souvent des virgules qui pourraient fausser la délimitation des colonnes.
   
 ## 3. Ingestion des Données Semi-Structurées (JSON)
 
@@ -196,5 +196,19 @@ FILE_FORMAT = (TYPE = 'JSON');
 select * from LINKEDIN.BRONZE.company_industries;
 ```
 
+# 🥈 Phase 2 : Raffinement et Normalisation (Couche SILVER)
 
+La couche **Silver** représente l'étape cruciale de transformation structurelle. L'enjeu est de passer d'un stockage brut à un modèle de données **typé**, **propre** et **relationnel**, garantissant l'intégrité des analyses futures.
+
+## 🎯 Stratégie Globale de Nettoyage (Phase SILVER)
+
+La transition de la couche **BRONZE** vers la couche **SILVER** ne se limite pas à un simple copier-coller. Elle repose sur une architecture de nettoyage en 4 piliers majeurs pour garantir que chaque donnée est **fiable**, **typée** et **cohérente**.
+
+### 1. Normalisation et Standardisation Textuelle
+
+Les données brutes de LinkedIn contiennent souvent du "bruit" lié à la saisie utilisateur ou au formatage HTML. Pour y remédier, nous appliquons trois traitements systématiques :
+
+* **Suppression des espaces :** Application de la fonction `TRIM()` pour éliminer les espaces blancs superflus avant et après les chaînes de caractères.
+* **Traitement des "Faux NULL" :** Utilisation de `NULLIF(col, 'null')` ou `NULLIF(col, '0')`. Dans la couche Bronze, certaines valeurs vides étaient stockées sous forme de texte `'null'` ou `'0'`. Nous les convertissons en véritables valeurs **NULL SQL** pour ne pas fausser les futurs calculs statistiques (moyennes, comptes).
+* **Uniformisation de la Casse :** Utilisation de `INITCAP()` pour les noms propres et les spécialités (ex: "SOFTWARE" ➔ "Software") afin d'assurer un rendu visuel professionnel et cohérent dans le dashboard Streamlit.
 
