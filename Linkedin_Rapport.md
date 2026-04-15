@@ -200,7 +200,19 @@ select * from LINKEDIN.BRONZE.company_industries;
 
 La couche **Silver** représente l'étape cruciale de transformation structurelle. L'enjeu est de passer d'un stockage brut à un modèle de données **typé**, **propre** et **relationnel**, garantissant l'intégrité des analyses futures.
 
-## 🎯 Stratégie Globale de Nettoyage (Phase SILVER)
+## 1. Initialisation de l'Environnement Silver
+
+Avant de procéder au nettoyage, nous isolons les données raffinées dans un schéma dédié. Cette séparation physique est une "best practice" permettant de sécuriser la donnée source (Bronze) et d'organiser la gouvernance des accès.
+
+```sql
+-- Initialisation du schéma Silver
+CREATE SCHEMA IF NOT EXISTS LINKEDIN.SILVER;
+
+-- Vérification de la création
+SHOW SCHEMAS IN DATABASE LINKEDIN;
+```
+
+## 2. Stratégie Globale de Nettoyage (Phase SILVER)
 
 La transition de la couche **BRONZE** vers la couche **SILVER** ne se limite pas à un simple copier-coller. Elle repose sur une architecture de nettoyage en 4 piliers majeurs pour garantir que chaque donnée est **fiable**, **typée** et **cohérente**.
 
@@ -211,4 +223,113 @@ Les données brutes de LinkedIn contiennent souvent du "bruit" lié à la saisie
 * **Suppression des espaces :** Application de la fonction `TRIM()` pour éliminer les espaces blancs superflus avant et après les chaînes de caractères.
 * **Traitement des "Faux NULL" :** Utilisation de `NULLIF(col, 'null')` ou `NULLIF(col, '0')`. Dans la couche Bronze, certaines valeurs vides étaient stockées sous forme de texte `'null'` ou `'0'`. Nous les convertissons en véritables valeurs **NULL SQL** pour ne pas fausser les futurs calculs statistiques (moyennes, comptes).
 * **Uniformisation de la Casse :** Utilisation de `INITCAP()` pour les noms propres et les spécialités (ex: "SOFTWARE" ➔ "Software") afin d'assurer un rendu visuel professionnel et cohérent dans le dashboard Streamlit.
+
+### 2. Fiabilisation Temporelle (Time Intelligence)
+
+L'un des plus grands défis de ce projet a été la gestion des dates et leur conversion depuis les données sources.
+
+* **Le problème de l'an 1970 :** Les dates LinkedIn sont souvent extraites au format "Unix Epoch" (en millisecondes). Une conversion directe sans vérification préalable générait systématiquement des dates erronées calées sur l'année 1970.
+* **La Solution :** Mise en place d'une logique de détection automatique d'unité de temps :
+    * Si la valeur est $> 10^{12}$, nous divisons par 1000 pour convertir les millisecondes en secondes.
+    * Sinon, la valeur est traitée directement comme des secondes.
+* **Résultat :** Toutes les dates de publication (`listed_at`) et d'expiration sont désormais alignées sur le fuseau horaire **NTZ** (No Time Zone) pour garantir une précision totale lors des analyses temporelles.
+
+ ### 3. Sécurisation des Types (Strong Typing)
+
+Pour permettre les analyses avancées de la phase **GOLD**, les données ont été extraites de leur format `STRING` initial vers des types natifs Snowflake :
+
+* **Numérique :** Les salaires (`FLOAT`) et les effectifs (`INT`) ont été convertis pour permettre les agrégations mathématiques ($SUM$, $AVG$).
+* **Identifiants :** Les IDs (`job_id`, `company_id`) sont convertis en `BIGINT` pour optimiser les performances des jointures (les jointures sur des entiers sont techniquement plus rapides que sur du texte).
+* **Booléens :** Transformation des indicateurs `0/1` ou `'TRUE'/'FALSE'` en véritables types `BOOLEAN`. Cela simplifie l'écriture des filtres dans le dashboard Streamlit (ex: `WHERE is_remote = TRUE`).
+
+### 4. Restructuration du Semi-Structuré (Flattening)
+
+Le projet utilise plusieurs fichiers **JSON** (Companies, Industries, Specialities). La stratégie de nettoyage inclut une étape cruciale de "dépliage" :
+
+* **Usage du `LATERAL FLATTEN` :** Cette fonction Snowflake a été utilisée pour transformer chaque objet à l'intérieur d'un tableau JSON en une ligne relationnelle distincte.
+* **Modélisation 1:N :** Une seule ligne Bronze (ex: une entreprise avec une liste de secteurs) est devenue plusieurs lignes Silver (une ligne par secteur d'activité). Cela permet des analyses granulaires par industrie, impossible à réaliser sur un format imbriqué.
+
+## 3. Transformation des 8 Tables Silver
+
+### 3.1 Table `JOB_POSTINGS` (Table Centrale)
+
+**Rôle** : Centralise toutes les offres d'emploi avec leurs attributs principaux.
+
+```sql
+-- la Table Job_Postings
+-- Transformation de JOBPOSTINGS (Bronze -> Silver)-----------------------------
+
+CREATE OR REPLACE TABLE LINKEDIN.SILVER.JOB_POSTINGS AS
+SELECT
+    -- Identifiants (Nettoyés et Castés)
+    NULLIF(TRIM(job_id), 'null')::BIGINT AS job_id,
+    NULLIF(TRIM(company_name), 'null')::BIGINT AS company_id, 
+    
+    -- Textes (Tous avec TRIM)
+    TRIM(title) AS title,
+
+    -- AJOUT : Détection de la langue basée sur le titre
+    CASE 
+        WHEN REGEXP_LIKE(TRIM(title), '.*[\\x{4E00}-\\x{9FFF}].*') THEN 'Chinois/Japonais'
+        WHEN REGEXP_LIKE(TRIM(title), '.*[\\x{0400}-\\x{04FF}].*') THEN 'Cyrillique'
+        WHEN REGEXP_LIKE(TRIM(title), '.*[\\x{0600}-\\x{06FF}].*') THEN 'Arabe'
+        WHEN REGEXP_LIKE(TRIM(title), '^[\\x{0000}-\\x{007F}]+$') THEN 'Latin/Anglais'
+        ELSE 'Autre / Mixte'
+    END AS language_category,
+
+    TRIM(description) AS description,
+    TRIM(skills_desc) AS skills_description, 
+    TRIM(location) AS location,
+    TRIM(posting_domain) AS posting_domain, 
+    
+    -- Salaire et Compensation
+    NULLIF(TRIM(max_salary), 'null')::FLOAT AS max_salary,
+    NULLIF(TRIM(med_salary), 'null')::FLOAT AS med_salary,
+    NULLIF(TRIM(min_salary), 'null')::FLOAT AS min_salary,
+    TRIM(pay_period) AS pay_period,
+    TRIM(currency) AS currency,
+    TRIM(compensation_type) AS compensation_type,
+    
+    -- Type de travail
+    TRIM(work_type) AS work_type,
+    TRIM(formatted_work_type) AS formatted_work_type,
+    CASE  
+        WHEN TRIM(remote_allowed) = '1.0' THEN TRUE  
+        ELSE FALSE  
+    END AS is_remote,
+    TRIM(formatted_experience_level) AS experience_level,
+
+    -- Statistiques et Candidature
+    NULLIF(TRIM(applies), 'null')::INT AS applies_count,
+    NULLIF(TRIM(views), 'null')::INT AS views_count,
+    TRIM(application_type) AS application_type,
+    TRIM(application_url) AS application_url,
+    TRIM(job_posting_url) AS job_posting_url,
+
+    -- Dates (Conversion de millisecondes en Timestamp)
+    TO_TIMESTAMP_NTZ(NULLIF(TRIM(listed_time), 'null')::BIGINT / 1000) AS listed_at,
+    TO_TIMESTAMP_NTZ(NULLIF(TRIM(original_listed_time), 'null')::BIGINT / 1000) AS original_listed_at,
+    TO_TIMESTAMP_NTZ(NULLIF(TRIM(expiry), 'null')::BIGINT / 1000) AS expires_at,
+    TO_TIMESTAMP_NTZ(NULLIF(TRIM(closed_time), 'null')::BIGINT / 1000) AS closed_at,
+    
+    -- Booléen
+    NULLIF(TRIM(sponsored), 'null')::BOOLEAN AS is_sponsored
+
+FROM LINKEDIN.BRONZE.JOB_POSTINGS;
+
+--Affichage 
+SELECT * FROM LINKEDIN.SILVER.JOB_POSTINGS ;
+```
+
+
+
+
+
+
+
+
+
+
+
+
 
