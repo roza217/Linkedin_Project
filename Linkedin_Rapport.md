@@ -14,7 +14,7 @@ J'ai implémenté une architecture **Medallion** pour garantir la qualité et la
 
 ---
 
-# 🏗️ Phase 1 : Ingestion des Données (Couche BRONZE)
+# 🥉 Phase 1 : Ingestion des Données (Couche BRONZE)
 
 La couche **Bronze** sert de zone d'atterrissage. L'objectif est de charger les fichiers sources sans transformation pour conserver une "source de vérité".
 
