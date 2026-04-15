@@ -417,7 +417,7 @@ Le script traite un problème majeur identifié lors de l'exploration : la prés
 
 **Dimensionnement** : Le champ `company_size` est casté en `INT`, permettant ainsi de réaliser des tris ou des groupements par taille d'entreprise (ex: PME vs Grandes Entreprises).
 
-### 3.3 Table `BENEFITS` (Avantages) 
+### 3.3 Table `BENEFITS`  
 
 **Rôle** : Liste les avantages liés à chaque offre (assurance, mutuelle, etc.).
 
@@ -442,6 +442,104 @@ FROM LINKEDIN.BRONZE.BENEFITS;
 -- Affichage
 SELECT * FROM LINKEDIN.SILVER.BENEFITS LIMIT 10;
 ```
+Ce script traite la table des avantages (avantages sociaux, mutuelle, bonus, etc.) pour la rendre exploitable et cohérente avec le reste du modèle de données. L'accent est mis sur la **standardisation des types** et la **préparation aux jointures**.
+
+#### A. Intégrité Référentielle (Casting de l'ID)
+
+`job_id::BIGINT AS job_id`
+
+* **Action** : Conversion de l'identifiant de l'offre en `BIGINT`.
+
+* **Justification** : Cette étape est fondamentale pour garantir que la table `BENEFITS` peut être jointe sans erreur à la table `JOB_POSTINGS` (déjà traitée en BIGINT). Cela évite les problèmes de performance et les erreurs de "mismatch" de type de données lors des analyses croisées.
+
+#### B. Conversion de Logique Métier (Boolean Transformation)
+
+`CASE WHEN inferred = '1' THEN TRUE ELSE FALSE END AS is_inferred`
+
+* **Action** : Transformation d'une colonne de type texte ou numérique (`0` / `1`) en un type **Boolean** (`TRUE` / `FALSE`).
+
+* **Justification** : Sur LinkedIn, certains avantages sont explicitement listés par l'entreprise, tandis que d'autres sont "déduits" (inferred) par l'algorithme. Convertir cela en booléen permet d'effectuer des filtres rapides et clairs (ex: `WHERE is_inferred = FALSE` pour ne garder que les avantages certifiés par l'employeur).
+
+#### C. Renommage Sémantique
+
+`type AS benefit_type`
+
+* **Action** : Renommage de la colonne `type` en `benefit_type`.
+
+* **Justification** : Le mot `type` est souvent un mot réservé en SQL ou peut porter à confusion. Le renommer en `benefit_type` apporte une meilleure clarté sémantique pour les utilisateurs de la couche Silver.
+
+### 3.4 Table `EMPLOYEE_COUNTS` 
+
+**Rôle** : Historique du nombre d'employés et de followers.
+
+```sql
+------------- Transformation de EMPLOYEE_COUNTS (Bronze -> Silver)
+CREATE OR REPLACE TABLE LINKEDIN.SILVER.EMPLOYEE_COUNTS AS
+SELECT
+-------- IDENTIFIANT
+    NULLIF(TRIM(company_id), 'null')::BIGINT AS company_id,
+
+-------- COMPTEURS
+
+    CASE
+        WHEN employee_count::INT = 0 THEN NULL
+        ELSE employee_count::INT
+    END AS employee_count,
+
+    CASE
+        WHEN follower_count::INT >= 0 THEN follower_count::INT
+        ELSE NULL
+    END AS follower_count,
+
+-------- DATE DE COLLECTE
+
+    CASE
+        -- Millisecondes : on divise, puis on convertit en BIGINT
+        WHEN TRY_TO_DOUBLE(time_recorded) > 1000000000000
+        THEN TO_TIMESTAMP_NTZ((TRY_TO_DOUBLE(time_recorded) / 1000)::BIGINT)
+
+        -- Secondes : conversion directe en BIGINT
+        WHEN TRY_TO_DOUBLE(time_recorded) BETWEEN 1000000000 AND 1000000000000
+        THEN TO_TIMESTAMP_NTZ(TRY_TO_DOUBLE(time_recorded)::BIGINT)
+
+        ELSE NULL
+    END AS recorded_at
+
+FROM LINKEDIN.BRONZE.EMPLOYEE_COUNTS;
+
+-------- Affichage de quelques données
+SELECT * FROM LINKEDIN.SILVER.EMPLOYEE_COUNTS LIMIT 10;
+```
+
+Ce script permet de suivre l'attractivité d'une entreprise à travers le temps, en garantissant que les métriques sont cohérentes et les dates normalisées.
+
+#### A. Fiabilisation des Indicateurs Quantitatif
+
+Le script applique des règles de gestion pour éliminer les données aberrantes :
+
+* **Effectifs (`employee_count`) :** Transformation systématique de la valeur `0` en `NULL`.
+    * *Justification :* Une entreprise active sur LinkedIn ne peut pas avoir zéro employé. Cette valeur est donc traitée comme une erreur de collecte ou une donnée manquante pour ne pas fausser les moyennes de taille d'entreprise.
+      
+* **Notoriété (`follower_count`) :** Mise en place d'une vérification de positivité.
+    * *Justification :* Un nombre d'abonnés ne peut techniquement pas être négatif. Cette sécurité est indispensable pour la fiabilité des futurs calculs de taux de croissance et de scores d'influence.
+
+#### B. Algorithme de Normalisation Temporelle
+
+La gestion de la colonne `recorded_at` représente l'aspect le plus technique du script de transformation. Les données sources LinkedIn présentent une hétérogénéité de formats (Secondes ou Millisecondes) qui nécessite un traitement dynamique.
+
+* **Détection intelligente :** Le script utilise la fonction `TRY_TO_DOUBLE` couplée à des seuils numériques ($10^{12}$) pour différencier automatiquement les deux formats sans erreur.
+* **Traitement hybride :**  1. **Format Millisecondes :** Si la valeur dépasse le seuil, une division par 1000 est appliquée avant la conversion en date.
+  
+2. **Format Secondes :** Si la valeur est inférieure au seuil, la conversion vers le format `TIMESTAMP` est directe.
+   
+* **Résultat :** L'obtention d'une colonne `Timestamp` unique, propre et homogène. Cette étape est indispensable pour réaliser des analyses chronologiques (Time Series) fiables et cohérentes.
+
+#### C. Cohérence du Référentiel
+
+* **Casting de l'ID** : Le `company_id` est casté en `BIGINT`.
+
+* **Impact** : Cela assure une jointure parfaite avec la table `COMPANIES` déjà traitée, permettant de croiser le secteur d'activité avec l'évolution du nombre d'employés.
+
 
 
 
