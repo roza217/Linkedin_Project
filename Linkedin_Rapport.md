@@ -1,4 +1,4 @@
-# 📊 Analyse des Offres d'Emploi LinkedIn avec Snowflake & Streamlit
+# 📊 Analyse des Offres d'Emploi LinkedIn avec Snowflake & Streamlit 
 
 ## 📝 Présentation du Projet
 Dans un marché de l'emploi dynamique, l'analyse des données de plateformes comme **LinkedIn** est cruciale pour comprendre les tendances de recrutement. Ce projet met en place un pipeline de données complet, de l'ingestion de données brutes (CSV/JSON) à la visualisation interactive.
@@ -6,6 +6,7 @@ Dans un marché de l'emploi dynamique, l'analyse des données de plateformes com
 L'objectif est de transformer des milliers de lignes de données non traitées en **insights exploitables** pour identifier les secteurs porteurs et les structures de rémunération.
 
 ## 🏗️ Architecture Technique : Le Modèle Medallion
+
 On a implémenté une architecture **Medallion** pour garantir la qualité et la traçabilité des données :
 
 1.  **Bronze (Raw) :** Ingestion des données brutes depuis un stockage S3 vers Snowflake.
@@ -864,5 +865,141 @@ Ce modèle sépare clairement les **Faits** (les transactions mesurables, comme 
 ## 📊 3. Analyses Métiers et Résultats
 
 Nous avons généré les tables analytiques pour répondre aux 5 questions stratégiques du projet, plus des analyses géographiques et organisationnelles supplémentaires.
+
+### 📈 Analyse 1 : Volume de postes par industrie
+
+```sql
+-------- Top 10 des titres de postes les plus publiés par industrie
+CREATE OR REPLACE TABLE LINKEDIN.GOLD.ANALYSE_JOBS_GLOBAL AS
+SELECT 
+    di.industry_name,
+    dj.title,
+    f.language_category,
+    COUNT(*) as total_postings
+FROM LINKEDIN.GOLD.FACT_JOB_POSTINGS f
+JOIN LINKEDIN.GOLD.DIM_INDUSTRY di ON f.industry_id = di.industry_id
+JOIN LINKEDIN.GOLD.DIM_JOB dj ON f.job_id = dj.job_id
+GROUP BY 1, 2, 3;
+
+--------Affichage 
+select * from LINKEDIN.GOLD.ANALYSE_JOBS_GLOBAL limit 15;
+
+```
+
+### 💰 Analyse 2 : Top 10 des rémunérations
+
+**🛠️ Note Technique sur la Devise :**
+
+Bien que le script inclue un filtre explicite `f.currency = 'USD'`, une analyse exploratoire préalable de la table `SILVER.JOB_POSTINGS` a confirmé que le **Dollar Américain (USD)** est l'unique devise présente dans l'ensemble du dataset. Ce filtre fait donc office de garde-fou pour garantir l'intégrité des calculs de moyenne sans nécessiter de conversion monétaire complexe. 
+
+```sql
+-------- ANALYSE 2 : Top 10 des postes les mieux rémunérés par industrie.
+
+CREATE OR REPLACE TABLE LINKEDIN.GOLD.ANALYSE_SALAIRES_TOP10 AS
+WITH SalaryClean AS (
+    SELECT 
+        di.industry_name,
+        dj.title,
+        f.language_category,
+        (f.max_salary + f.min_salary) / 2 AS avg_salary
+    FROM LINKEDIN.GOLD.FACT_JOB_POSTINGS f
+    JOIN LINKEDIN.GOLD.DIM_INDUSTRY di ON f.industry_id = di.industry_id
+    JOIN LINKEDIN.GOLD.DIM_JOB dj ON f.job_id = dj.job_id
+    WHERE f.max_salary IS NOT NULL AND f.currency = 'USD'
+)
+SELECT 
+    industry_name, title, language_category,
+    ROUND(AVG(avg_salary), 2) AS mean_salary_title,
+    COUNT(*) as nb_postings
+FROM SalaryClean
+GROUP BY 1, 2, 3
+HAVING COUNT(*) >= 3 
+QUALIFY ROW_NUMBER() OVER (PARTITION BY industry_name, language_category ORDER BY AVG(avg_salary) DESC) <= 10;
+
+-------------affiché la table
+select * from LINKEDIN.GOLD.ANALYSE_SALAIRES_TOP10;
+```
+
+### 🏢 Analyse 3 & 4 : Répartition par Taille et Secteur
+
+```sql
+-- Répartition par taille d'entreprise
+CREATE OR REPLACE TABLE LINKEDIN.GOLD.ANALYSE_COMPANY_SIZE AS
+SELECT 
+    di.industry_name,
+    f.language_category,
+    dc.company_size,
+    COUNT(*) as nb_offres
+FROM LINKEDIN.GOLD.FACT_JOB_POSTINGS f
+JOIN LINKEDIN.GOLD.DIM_INDUSTRY di ON f.industry_id = di.industry_id
+JOIN LINKEDIN.GOLD.DIM_COMPANY dc ON f.company_id = dc.company_id
+WHERE dc.company_size IS NOT NULL
+GROUP BY 1, 2, 3;
+
+-- Répartition globale par secteur
+CREATE OR REPLACE TABLE LINKEDIN.GOLD.ANALYSE_REPARTITION_SECTEUR AS
+SELECT industry_name, language_category, SUM(total_postings) as total_offres
+FROM LINKEDIN.GOLD.ANALYSE_JOBS_GLOBAL
+GROUP BY 1, 2;
+```
+
+### 🕒 Analyse 5 : Types d'emplois (Work Type)
+
+```sql
+CREATE OR REPLACE TABLE LINKEDIN.GOLD.ANALYSE_JOB_TYPE AS
+SELECT 
+    di.industry_name,
+    f.language_category,
+    dj.formatted_work_type,
+    COUNT(*) as nb_offres
+FROM LINKEDIN.GOLD.FACT_JOB_POSTINGS f
+JOIN LINKEDIN.GOLD.DIM_INDUSTRY di ON f.industry_id = di.industry_id
+JOIN LINKEDIN.GOLD.DIM_JOB dj ON f.job_id = dj.job_id
+GROUP BY 1, 2, 3;
+```
+
+### 🌍 6. Analyses Supplémentaires (Géo & Remote)
+
+Nous avons enrichi le rapport avec des vues sur la localisation et le télétravail.
+
+```sql
+-- Analyse Géographique
+CREATE OR REPLACE VIEW LINKEDIN.GOLD.VIEW_ANALYSE_GEOGRAPHIQUE AS
+SELECT 
+    di.industry_name,
+    f.language_category,
+    CASE 
+        WHEN s.location LIKE '%, %' THEN TRIM(SPLIT_PART(s.location, ',', -1)) 
+        ELSE s.location 
+    END AS zone_geographique,
+    COUNT(*) as nb_offres
+FROM LINKEDIN.GOLD.FACT_JOB_POSTINGS f
+JOIN LINKEDIN.GOLD.DIM_INDUSTRY di ON f.industry_id = di.industry_id
+JOIN LINKEDIN.SILVER.JOB_POSTINGS s ON f.job_id = s.job_id
+GROUP BY 1, 2, 3;
+
+-- Analyse Télétravail
+CREATE OR REPLACE VIEW LINKEDIN.GOLD.VIEW_ANALYSE_REMOTE AS
+SELECT 
+    di.industry_name,
+    f.language_category,
+    CASE WHEN dj.is_remote = TRUE THEN 'Télétravail' ELSE 'Sur site / Hybride' END AS modalite_travail,
+    COUNT(*) as nb_offres
+FROM LINKEDIN.GOLD.FACT_JOB_POSTINGS f
+JOIN LINKEDIN.GOLD.DIM_INDUSTRY di ON f.industry_id = di.industry_id
+JOIN LINKEDIN.GOLD.DIM_JOB dj ON f.job_id = dj.job_id
+GROUP BY 1, 2, 3;
+```
+
+
+
+
+
+
+
+
+
+
+
 
 
