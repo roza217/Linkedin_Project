@@ -1019,9 +1019,88 @@ select * from LINKEDIN.GOLD.VIEW_ANALYSE_REMOTE;
 
 * Utilisation de la moyenne arithmétique `(max + min) / 2` comme proxy du salaire.
 
+# 🛠️ Analyse des Défis et Solutions Apportées
 
+Le passage des données brutes au dashboard décisionnel a révélé plusieurs défis majeurs liés à la qualité de la donnée source. Voici les problématiques rencontrées et les solutions techniques mises en place pour garantir la fiabilité de l'analyse.
 
+## 1. Fiabilité Temporelle
 
+* **Problème** : Les dates de publication (`listed_at`) apparaissaient en millessecondes.
+
+* **Cause** : Les données sources étaient encodées en millisecondes (Unix Epoch), alors que Snowflake interprétait ces valeurs en secondes par défaut.
+
+* **Solution** : Application d'une transformation mathématique lors du passage en couche Silver : division de la valeur par 1000 avant la conversion via `TO_TIMESTAMP()`.
+
+* **Impact** : Rétablissement de la chronologie réelle des offres (2023-2024).
+
+## 2. Intégrité des Jointures : Gestion des valeurs NULL
+
+* **Problème** : Un taux élevé de valeurs manquantes dans la colonne `industry_name` entraînait la perte de nombreuses offres lors des jointures SQL.
+
+* **Solution** : Création d'une catégorie pivot **"UNKNOWN"** avec l'identifiant `0` dans la table de dimension `DIM_INDUSTRY`. Utilisation de la fonction `COALESCE` pour rediriger tous les secteurs vides vers cet identifiant.
+
+* **Impact** : 100% des offres de la table de faits sont conservées, garantissant l'exactitude des volumes totaux.
+
+## 3. Qualité Géographique : L'anomalie du code "OO"
+
+* **Problème** : Identification de codes de localisation invalides comme "OO", n'appartenant à aucun standard connu.
+
+* **Solution** : Identification de ces valeurs comme "bruit" statistique lors du Data Profiling. Elles ont été isolées dans une catégorie "Données non qualifiées" pour ne pas polluer le Top 10 des localisations réelles.
+
+* **Impact** : Une cartographie plus précise et professionnelle des hubs de recrutement.
+
+## 4. Métadonnées Manquantes : Le cas `company_size`
+
+* **Problème** : La variable de taille d'entreprise est codée numériquement (1, 3, 5), mais l'absence de dictionnaire de données (Data Dictionary) rendait l'interprétation incertaine.
+
+* **Solution** : Par rigueur scientifique, nous avons choisi de conserver les codes bruts plutôt que de risquer une interprétation erronée.
+
+* **Impact** : Préservation de l'honnêteté intellectuelle de l'analyse.
+
+## 5. Bruit Linguistique et Caractères Spéciaux
+
+* **Problème** : Présence de titres de postes en caractères non-latins (Chinois, Japonais) et caractères spéciaux rendant les analyses globales illisibles.
+
+* **Solution** : Implémentation d'un filtre dynamique `LANGUAGE_CATEGORY` basé sur une détection de pattern Regex.
+
+* **Impact** : Possibilité pour l'utilisateur de segmenter le marché par zone linguistique, offrant une expérience fluide.
+
+## 6. Analyse Financière : Hétérogénéité des Salaires
+
+* **Problème** : Mélange de devises et cases vides rendant les moyennes salariales instables.
+
+* **Solution** : Filtrage strict sur la devise USD et utilisation de la clause HAVING COUNT(*) >= 3 pour n'afficher que les métiers ayant un échantillon représentatif.
+
+* **Impact** : Fiabilité des tendances de rémunération affichées dans le dashboard.
+
+## 7. La jointure "Explosive" (Secteurs multiples)
+
+* **Problème** : Une même entreprise peut être rattachée à plusieurs secteurs, créant des doublons (une offre comptée plusieurs fois).
+
+* **Solution** : Utilisation d'une stratégie de jointure spécifique dans la couche GOLD pour s'assurer que l'analyse par secteur reste cohérente sans multiplier artificiellement le nombre total d'offres.
+
+* **Impact** : Justesse des statistiques de volume.
+
+## 8. Défi de la Scalabilité : Normalisation des Compétences (Skills)
+
+* **Problème** : Les compétences sont stockées sous forme d'abréviations techniques (HCPR, PRJM).
+
+* **Solution Actuelle** : Structure CASE WHEN en SQL pour mapper manuellement une quarantaine d'abréviations vers leurs noms complets ("Project Management", etc.).
+
+* **Préconisation "Expert"** : Pour passer à l'échelle industrielle, la solution serait de remplacer ce bloc par une table de correspondance (Mapping Table) externe reliée par un `JOIN`.
+
+## 9. Hétérogénéité des bases salariales (Hourly vs Yearly)
+
+* **Problème** : Le dataset source mélange des offres avec des rémunérations horaires (ex: 40$/h) et des rémunérations annuelles (ex: 100 000$/an). Sans traitement, le calcul d'une moyenne directe donne des résultats absurdes.
+
+* **Analyse technique** : Une conversion automatique (multiplier le salaire horaire par 2080 heures/an) aurait introduit un biais d'extrapolation, car le temps de travail contractuel est inconnu.
+
+* **Solution** : Filtrage strict des analyses financières sur la périodicité 'YEARLY' dans la couche GOLD pour comparer des données homogènes et certifiées.
+
+* **Impact** : Fiabilité totale des benchmarks salariaux présentés, évitant toute pollution par des valeurs aberrantes ou des estimations approximatives.
+
+## 💡 Remarque Finale :
+L'ensemble de ces correctifs techniques démontre que la valeur d'un projet Big Data ne réside pas dans la quantité de données collectées, mais dans la rigueur du traitement appliqué pour transformer un signal bruyant en une information stratégique fiable.
 
 
 
