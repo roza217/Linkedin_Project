@@ -785,7 +785,7 @@ Le modèle a été décomposé en tables de **Dimensions** (contexte) et une tab
 Les dimensions permettent de filtrer les offres par métier, entreprise ou secteur.
 
 ```sql
--- creation de la table Dimension JOB : Caractéristiques de l'offre
+-------- Creation de la table de Dimension : DIM_JOB
 CREATE OR REPLACE TABLE LINKEDIN.GOLD.DIM_JOB AS
 SELECT DISTINCT
     JOB_ID,
@@ -795,10 +795,12 @@ SELECT DISTINCT
     IS_REMOTE
 FROM LINKEDIN.SILVER.JOB_POSTINGS;
 
--- Affichage 
-select * from LINKEDIN.GOLD.DIM_JOB;
+-------- Affichage 
+select* from LINKEDIN.GOLD.DIM_JOB;
 
--- creation de la table Dimension COMPANY : Référentiel des entreprises
+-------- *** ---- *** ---- *** --------
+
+-------- Creation de la table de Dimension : DIM_COMPANY 
 CREATE OR REPLACE TABLE LINKEDIN.GOLD.DIM_COMPANY AS
 SELECT DISTINCT
     COMPANY_ID,
@@ -807,26 +809,25 @@ SELECT DISTINCT
     STATE AS LOCATION_STATE
 FROM LINKEDIN.SILVER.COMPANIES;
 
--- Affichage 
+-------- affichage
 select * from LINKEDIN.GOLD.DIM_COMPANY;
 
--- creation de la table Dimension INDUSTRY
-CREATE OR REPLACE TABLE LINKEDIN.GOLDE.DIM_INDUSTRY AS
+-------- *** ---- *** ---- *** --------
+
+-------- Creation de la table de Dimension : DIM_INDUSTRY 
+CREATE OR REPLACE TABLE LINKEDIN.GOLD.DIM_INDUSTRY AS
 SELECT
     ROW_NUMBER() OVER (ORDER BY INDUSTRY_NAME) AS INDUSTRY_ID,
     INDUSTRY_NAME
-FROM (
-    SELECT DISTINCT INDUSTRY_NAME
-    FROM LINKEDIN.SILVER.COMPANY_INDUSTRIES
-     )
+FROM (SELECT DISTINCT INDUSTRY_NAME FROM LINKEDIN.SILVER.COMPANY_INDUSTRIES)
 WHERE INDUSTRY_NAME IS NOT NULL;
 
--- Gestion des données manquantes
 INSERT INTO LINKEDIN.GOLD.DIM_INDUSTRY (INDUSTRY_ID, INDUSTRY_NAME)
 VALUES (0, 'UNKNOWN');
 
--- Affichage 
+-------- Affichage 
 select * from LINKEDIN.GOLD.DIM_INDUSTRY;
+
 ```
 
 ### B. Table de Faits
@@ -840,6 +841,7 @@ SELECT
     j.language_category,
     j.max_salary,
     j.min_salary,
+    j.pay_period,      -- <--- AJOUT ICI
     j.currency,
     j.listed_at,
     COALESCE(di.industry_id, 0) AS industry_id,
@@ -847,6 +849,10 @@ SELECT
 FROM LINKEDIN.SILVER.JOB_POSTINGS j
 LEFT JOIN LINKEDIN.SILVER.COMPANY_INDUSTRIES ci ON j.company_id = ci.company_id
 LEFT JOIN LINKEDIN.GOLD.DIM_INDUSTRY di ON ci.industry_name = di.industry_name;
+
+-------- affichage 
+select * from LINKEDIN.GOLD.FACT_JOB_POSTINGS;
+
 ```
 ### C. Architecture du Schéma en Étoile (Star Schema)
 
@@ -866,8 +872,6 @@ Ce modèle sépare clairement les **Faits** (les transactions mesurables, comme 
 
 Nous avons généré les tables analytiques pour répondre aux 5 questions stratégiques du projet, plus des analyses géographiques et organisationnelles supplémentaires.
 
-### 📈 Analyse 1 : Volume de postes par industrie
-
 ```sql
 -------- Top 10 des titres de postes les plus publiés par industrie
 CREATE OR REPLACE TABLE LINKEDIN.GOLD.ANALYSE_JOBS_GLOBAL AS
@@ -881,20 +885,12 @@ JOIN LINKEDIN.GOLD.DIM_INDUSTRY di ON f.industry_id = di.industry_id
 JOIN LINKEDIN.GOLD.DIM_JOB dj ON f.job_id = dj.job_id
 GROUP BY 1, 2, 3;
 
---------Affichage 
+-------- Affichage 
 select * from LINKEDIN.GOLD.ANALYSE_JOBS_GLOBAL limit 15;
 
-```
+-------- *** ---- *** ---- *** --------
 
-### 💰 Analyse 2 : Top 10 des rémunérations
-
-**🛠️ Note Technique sur la Devise :**
-
-Bien que le script inclue un filtre explicite `f.currency = 'USD'`, une analyse exploratoire préalable de la table `SILVER.JOB_POSTINGS` a confirmé que le **Dollar Américain (USD)** est l'unique devise présente dans l'ensemble du dataset. Ce filtre fait donc office de garde-fou pour garantir l'intégrité des calculs de moyenne sans nécessiter de conversion monétaire complexe. 
-
-```sql
--------- ANALYSE 2 : Top 10 des postes les mieux rémunérés par industrie.
-
+-------- ANALYSE 2 : Top 10 des postes les mieux rémunérés par industrie
 CREATE OR REPLACE TABLE LINKEDIN.GOLD.ANALYSE_SALAIRES_TOP10 AS
 WITH SalaryClean AS (
     SELECT 
@@ -905,7 +901,9 @@ WITH SalaryClean AS (
     FROM LINKEDIN.GOLD.FACT_JOB_POSTINGS f
     JOIN LINKEDIN.GOLD.DIM_INDUSTRY di ON f.industry_id = di.industry_id
     JOIN LINKEDIN.GOLD.DIM_JOB dj ON f.job_id = dj.job_id
-    WHERE f.max_salary IS NOT NULL AND f.currency = 'USD'
+    WHERE f.max_salary IS NOT NULL 
+      AND f.currency = 'USD'
+      AND f.pay_period = 'YEARLY' -- <--- FILTRE CRUCIAL POUR LA COHÉRENCE
 )
 SELECT 
     industry_name, title, language_category,
@@ -915,15 +913,12 @@ FROM SalaryClean
 GROUP BY 1, 2, 3
 HAVING COUNT(*) >= 3 
 QUALIFY ROW_NUMBER() OVER (PARTITION BY industry_name, language_category ORDER BY AVG(avg_salary) DESC) <= 10;
-
--------------affiché la table
+-------- affichage
 select * from LINKEDIN.GOLD.ANALYSE_SALAIRES_TOP10;
-```
 
-### 🏢 Analyse 3 & 4 : Répartition par Taille et Secteur
+-------- *** ---- *** ---- *** --------
+-------- ANALYSE 3 : Répartition des offres d’emploi par taille d’entreprise.
 
-```sql
--- Répartition par taille d'entreprise
 CREATE OR REPLACE TABLE LINKEDIN.GOLD.ANALYSE_COMPANY_SIZE AS
 SELECT 
     di.industry_name,
@@ -936,16 +931,23 @@ JOIN LINKEDIN.GOLD.DIM_COMPANY dc ON f.company_id = dc.company_id
 WHERE dc.company_size IS NOT NULL
 GROUP BY 1, 2, 3;
 
--- Répartition globale par secteur
+-------- affichage 
+select * from LINKEDIN.GOLD.ANALYSE_COMPANY_SIZE;
+
+-------- *** ---- *** ---- *** --------
+
+-------- ANALYSE 4 :Répartition des offres d’emploi par secteur d’activité.
 CREATE OR REPLACE TABLE LINKEDIN.GOLD.ANALYSE_REPARTITION_SECTEUR AS
 SELECT industry_name, language_category, SUM(total_postings) as total_offres
 FROM LINKEDIN.GOLD.ANALYSE_JOBS_GLOBAL
 GROUP BY 1, 2;
-```
 
-### 🕒 Analyse 5 : Types d'emplois (Work Type)
+-------- affichage
+select * from LINKEDIN.GOLD.ANALYSE_REPARTITION_SECTEUR;
 
-```sql
+-------- *** ---- *** ---- *** --------
+
+-------- ANALYSE 5 : Répartition des offres d’emploi par type d’emploi 
 CREATE OR REPLACE TABLE LINKEDIN.GOLD.ANALYSE_JOB_TYPE AS
 SELECT 
     di.industry_name,
@@ -956,14 +958,15 @@ FROM LINKEDIN.GOLD.FACT_JOB_POSTINGS f
 JOIN LINKEDIN.GOLD.DIM_INDUSTRY di ON f.industry_id = di.industry_id
 JOIN LINKEDIN.GOLD.DIM_JOB dj ON f.job_id = dj.job_id
 GROUP BY 1, 2, 3;
-```
 
-### 🌍 6. Analyses Supplémentaires (Géo & Remote)
+-------- affichage
+select * from LINKEDIN.GOLD.ANALYSE_JOB_TYPE;
 
-Nous avons enrichi le rapport avec des vues sur la localisation et le télétravail.
+-------- *** ---- *** ---- *** --------
+-------- *** ---- *** ---- *** -------- 
 
-```sql
--- Analyse Géographique
+ -------- quelques Analyses supplémentaire --------
+-------- ANALYSE 6 : Localisation (Géographique)
 CREATE OR REPLACE VIEW LINKEDIN.GOLD.VIEW_ANALYSE_GEOGRAPHIQUE AS
 SELECT 
     di.industry_name,
@@ -978,7 +981,12 @@ JOIN LINKEDIN.GOLD.DIM_INDUSTRY di ON f.industry_id = di.industry_id
 JOIN LINKEDIN.SILVER.JOB_POSTINGS s ON f.job_id = s.job_id
 GROUP BY 1, 2, 3;
 
--- Analyse Télétravail
+-------- affichage 
+select * from LINKEDIN.GOLD.VIEW_ANALYSE_GEOGRAPHIQUE;
+
+-------- *** ---- *** ---- *** --------
+
+-------- ANALYSE 7 : Télétravail (Remote)
 CREATE OR REPLACE VIEW LINKEDIN.GOLD.VIEW_ANALYSE_REMOTE AS
 SELECT 
     di.industry_name,
@@ -989,7 +997,23 @@ FROM LINKEDIN.GOLD.FACT_JOB_POSTINGS f
 JOIN LINKEDIN.GOLD.DIM_INDUSTRY di ON f.industry_id = di.industry_id
 JOIN LINKEDIN.GOLD.DIM_JOB dj ON f.job_id = dj.job_id
 GROUP BY 1, 2, 3;
+
+-------- affichage 
+select * from LINKEDIN.GOLD.VIEW_ANALYSE_REMOTE;
 ```
+
+### 📈 Analyse 1 : Volume de postes par industrie
+### 💰 Analyse 2 : Top 10 des rémunérations
+
+**🛠️ Note Technique sur la Devise :**
+
+Bien que le script inclue un filtre explicite `f.currency = 'USD'`, une analyse exploratoire préalable de la table `SILVER.JOB_POSTINGS` a confirmé que le **Dollar Américain (USD)** est l'unique devise présente dans l'ensemble du dataset. Ce filtre fait donc office de garde-fou pour garantir l'intégrité des calculs de moyenne sans nécessiter de conversion monétaire complexe. 
+
+### 🏢 Analyse 3 & 4 : Répartition par Taille et Secteur
+### 🕒 Analyse 5 : Types d'emplois (Work Type)
+### 🌍 6. Analyses Supplémentaires (Géo & Remote)
+
+
 
 
 
