@@ -1006,7 +1006,7 @@ GROUP BY 1, 2, 3;
 select * from LINKEDIN.GOLD.VIEW_ANALYSE_REMOTE;
 ```
 
-### 🛠️ Note Technique sur la Devise :**
+### 🛠️ Note Technique 
 * **Devise** : Une analyse exploratoire a confirmé que 'USD' est l'unique devise du dataset, éliminant le besoin de conversion.
 
 * **Période** : Le filtre `f.pay_period = 'YEARLY'` est crucial. Il évite de comparer des salaires annuels avec des taux horaires (Hourly), ce qui fausserait gravement les moyennes.
@@ -1018,6 +1018,243 @@ select * from LINKEDIN.GOLD.VIEW_ANALYSE_REMOTE;
 * La clause `QUALIFY` avec `ROW_NUMBER()` est une technique avancée qui permet de sélectionner uniquement le "Top 10" par catégorie sans avoir recours à des sous-requêtes complexes.
 
 * Utilisation de la moyenne arithmétique `(max + min) / 2` comme proxy du salaire.
+
+# 💻 Phase 4 : Interface Utilisateur & Visualisation (Streamlit)
+
+L'interface a été développée avec le framework Streamlit, directement connecté à notre entrepôt de données Snowflake via Snowpark. L'objectif est de transformer des millions de lignes de données complexes en un outil de pilotage interactif pour les recruteurs ou les analystes.
+
+Le script suivant utilise la session active de Snowflake pour requêter les tables de la couche **GOLD** de manière dynamique.
+
+```sql
+import streamlit as st
+from snowflake.snowpark.context import get_active_session
+import pandas as pd
+import altair as alt
+
+# =================================================================
+# 1. CONFIGURATION ET CONNEXION
+# =================================================================
+st.set_page_config(layout="wide", page_title="LinkedIn Market Intelligence - GOLD")
+st.title("📊 LinkedIn Market Intelligence Dashboard (Gold Layer)")
+
+session = get_active_session()
+
+# =================================================================
+# 2. NAVIGATION (SIDEBAR)
+# =================================================================
+st.sidebar.header("🧭 Navigation")
+page = st.sidebar.radio("Sélectionner une analyse :", 
+    [
+        "📈 Top Métiers", 
+        "💰 Salaires", 
+        "🏢 Taille Entreprise", 
+        "🌍 Comparaison Secteurs", 
+        "⏳ Type d'Emploi",
+        "📍 Localisation",
+        "💻 Télétravail"
+    ])
+
+st.sidebar.divider()
+st.sidebar.header("⚙️ Filtres")
+
+# =================================================================
+# 3. LOGIQUE DES FILTRES DYNAMIQUES
+# =================================================================
+try:
+    # Récupération des langues disponibles depuis la table Gold
+    languages_data = session.sql("SELECT DISTINCT LANGUAGE_CATEGORY FROM LINKEDIN.GOLD.ANALYSE_JOBS_GLOBAL").collect()
+    list_languages = [lang['LANGUAGE_CATEGORY'] for lang in languages_data]
+    selected_lang = st.sidebar.selectbox("1. Choisir la Langue :", list_languages)
+
+    # Récupération des secteurs selon la langue choisie (sauf pour la vue globale)
+    if page != "🌍 Comparaison Secteurs":
+        industries_data = session.sql(f"""
+            SELECT DISTINCT INDUSTRY_NAME 
+            FROM LINKEDIN.GOLD.ANALYSE_JOBS_GLOBAL 
+            WHERE LANGUAGE_CATEGORY = '{selected_lang}' 
+            ORDER BY 1
+        """).collect()
+        list_industries = [ind['INDUSTRY_NAME'] for ind in industries_data]
+        selected_ind = st.sidebar.selectbox("2. Choisir le Secteur :", list_industries)
+        # Clause WHERE réutilisable pour les analyses spécifiques
+        common_where = f"WHERE LANGUAGE_CATEGORY = '{selected_lang}' AND INDUSTRY_NAME = '{selected_ind}'"
+    else:
+        # Clause WHERE simplifiée pour la comparaison globale entre secteurs
+        common_where = f"WHERE LANGUAGE_CATEGORY = '{selected_lang}'"
+
+except Exception as e:
+    st.error(f"Erreur lors du chargement des filtres : {e}")
+    st.stop()
+
+# =================================================================
+# 4. AFFICHAGE DES ANALYSES (PAGES)
+# =================================================================
+
+# --- ANALYSE 1 : Top 10 des titres de postes les plus publiés par industrie---
+if page == "📈 Top Métiers":
+    st.header(f"Top 10 des métiers en {selected_ind}")
+    # Requête SQL : Classement par volume d'offres
+    df = session.sql(f"SELECT TITLE, TOTAL_POSTINGS FROM LINKEDIN.GOLD.ANALYSE_JOBS_GLOBAL {common_where} ORDER BY TOTAL_POSTINGS DESC LIMIT 10").to_pandas()
+    if not df.empty: 
+        st.bar_chart(df, x="TITLE", y="TOTAL_POSTINGS", color="#2962FF")
+
+# --- ANALYSE 2 : Top 10 des postes les mieux rémunérés par industrie ---
+elif page == "💰 Salaires":
+    st.header(f"Salaires Moyens (USD) - {selected_ind}")
+    # Requête SQL : Moyenne des salaires calculée en Gold
+    df = session.sql(f"SELECT TITLE, MEAN_SALARY_TITLE FROM LINKEDIN.GOLD.ANALYSE_SALAIRES_TOP10 {common_where} ORDER BY MEAN_SALARY_TITLE DESC").to_pandas()
+    if not df.empty: 
+        st.bar_chart(df, x="TITLE", y="MEAN_SALARY_TITLE", color="#2E7D32")
+
+# --- ANALYSE 3 : Répartition des offres d’emploi par taille d’entreprise ---
+elif page == "🏢 Taille Entreprise":
+    st.header(f"Répartition par taille d'entreprise - {selected_ind}")
+    # Requête SQL : Regroupement par catégorie de taille (PME, ETI, GE)
+    df = session.sql(f"SELECT COMPANY_SIZE, NB_OFFRES FROM LINKEDIN.GOLD.ANALYSE_COMPANY_SIZE {common_where} ORDER BY NB_OFFRES DESC").to_pandas()
+    if not df.empty: 
+        st.bar_chart(df, x="COMPANY_SIZE", y="NB_OFFRES", color="#FF8F00")
+
+# --- ANALYSE 4 : Répartition des offres d’emploi par secteur d’activité---
+elif page == "🌍 Comparaison Secteurs":
+    st.header(f"Part de marché par secteur ({selected_lang})")
+    # Requête SQL : Comparaison du volume global par industrie
+    df = session.sql(f"SELECT INDUSTRY_NAME, TOTAL_OFFRES FROM LINKEDIN.GOLD.ANALYSE_REPARTITION_SECTEUR {common_where} ORDER BY TOTAL_OFFRES DESC LIMIT 15").to_pandas()
+    if not df.empty: 
+        st.bar_chart(df, x="INDUSTRY_NAME", y="TOTAL_OFFRES", color="#E91E63")
+
+# --- ANALYSE 5 : Répartition des offres d’emploi par type d’emploi  ---
+elif page == "⏳ Type d'Emploi":
+    st.header(f"Répartition des contrats - {selected_ind}")
+    # Visualisation Donut Chart : CDI, CDD, Freelance, etc.
+    df = session.sql(f"SELECT FORMATTED_WORK_TYPE, NB_OFFRES FROM LINKEDIN.GOLD.ANALYSE_JOB_TYPE {common_where} ORDER BY NB_OFFRES DESC").to_pandas()
+    if not df.empty:
+        chart = alt.Chart(df).mark_arc(innerRadius=50).encode(
+            theta="NB_OFFRES:Q", color="FORMATTED_WORK_TYPE:N"
+        )
+        st.altair_chart(chart, use_container_width=True)
+
+# --- ANALYSE 6 : Répartition par Zones et États ---
+elif page == "📍 Localisation":
+    st.header(f"Répartition par Zones et États ({selected_lang})")
+    # Requête SQL sur une VUE Gold (jointure Fact + Silver.Job_Postings)
+    sql_geo = f"SELECT ZONE_GEOGRAPHIQUE, NB_OFFRES FROM LINKEDIN.GOLD.VIEW_ANALYSE_GEOGRAPHIQUE {common_where} ORDER BY NB_OFFRES DESC LIMIT 10"
+    df_geo = session.sql(sql_geo).to_pandas()
+    if not df_geo.empty:
+        chart_geo = alt.Chart(df_geo).mark_bar(color="#FF4B4B").encode(
+            x=alt.X('NB_OFFRES:Q', title="Nombre d'offres"),
+            y=alt.Y('ZONE_GEOGRAPHIQUE:N', sort='-x', title="Localisation"),
+            tooltip=['ZONE_GEOGRAPHIQUE', 'NB_OFFRES']
+        ).properties(height=400)
+        st.altair_chart(chart_geo, use_container_width=True)
+    else:
+        st.warning("Données de localisation indisponibles pour ce secteur.")
+
+# --- ANALYSE 7 : Indice de Flexibilité : Télétravail vs Sur Site ---
+elif page == "💻 Télétravail":
+    st.header(f"Flexibilité du travail - {selected_ind}")
+    # Requête sur Vue Gold : Télétravail vs Sur site
+    sql_remote = f"SELECT MODALITE_TRAVAIL, NB_OFFRES FROM LINKEDIN.GOLD.VIEW_ANALYSE_REMOTE {common_where}"
+    df_remote = session.sql(sql_remote).to_pandas()
+    if not df_remote.empty:
+        # Graphique en anneau avec couleurs personnalisées
+        chart_remote = alt.Chart(df_remote).mark_arc(innerRadius=60).encode(
+            theta=alt.Theta(field="NB_OFFRES", type="quantitative"),
+            color=alt.Color(field="MODALITE_TRAVAIL", type="nominal", 
+                            scale=alt.Scale(domain=['Télétravail', 'Sur site / Hybride'],
+                                          range=['#00C853', '#BDBDBD'])),
+            tooltip=['MODALITE_TRAVAIL', 'NB_OFFRES']
+        ).properties(width=400, height=400)
+        st.altair_chart(chart_remote, use_container_width=True)
+        
+        # LOGIQUE D'INSIGHT : Calcul automatique du taux de télétravail
+        total = df_remote['NB_OFFRES'].sum()
+        remote_count = df_remote[df_remote['MODALITE_TRAVAIL'] == 'Télétravail']['NB_OFFRES'].sum()
+        pct_remote = (remote_count / total) * 100 if total > 0 else 0
+        st.info(f"💡 Dans le secteur **{selected_ind}**, environ **{pct_remote:.1f}%** des offres proposent du télétravail.")
+    else:
+        st.warning("Données sur le télétravail indisponibles.")
+```
+
+## 🛠️ 1. Architecture de l'Application
+L'outil a été conçu pour maximiser l'expérience utilisateur (UX) via une structure simplifiée :
+
+* **Navigation Intuitive** : Une barre latérale (`st.sidebar`) permet de basculer entre les 7 analyses stratégiques.
+
+* **Système de Filtrage Dynamique :**
+    * **Filtre de Langue :** Segmentation à partir des titres (ex: Anglais vs Chinois) pour isoler les marchés linguistiques.
+    * **Filtre de Secteur :** Mise à jour en temps réel des graphiques selon l'industrie choisie (Tech, Retail, etc.), assurant une granularité maximale.
+ 
+## 🔍 2. Zoom sur les 7 Analyses Stratégiques
+
+### 📈 1. Top 10 des titres de postes
+
+* **Visualisation :** Bar Chart horizontal.
+
+* **Objectif :** Identifier les intitulés les plus fréquents d'une industrie.
+
+* **Insight :** Comprendre instantanément quels profils (ex: Data Engineer vs Data Scientist) dominent le recrutement.
+
+![Modèle de données](./1.png)
+
+### 💰 2. Top 10 des postes les mieux rémunérés
+
+* **Visualisation :** Bar Chart avec tri décroissant.
+
+* **Objectif :** Comparer la rémunération moyenne (USD) par titre de poste.
+
+* **Insight :** Aide au positionnement salarial sur le marché pour un secteur donné.
+
+![Modèle de données](./2.png)
+
+### 🏢 3. Répartition par taille d’entreprise
+
+* **Visualisation :** Bar Chart catégoriel.
+
+* **Objectif :** Observer si le recrutement est porté par des Startups, des PME ou des Grands Groupes.
+
+* **Insight :** Détermine l'environnement de travail prédominant (agilité vs stabilité).
+
+![Modèle de données](./3.png)
+
+### 🌍 4. Répartition par secteur d’activité
+
+* **Visualisation :** Bar Chart de comparaison globale.
+
+* **Objectif :** Mesurer le volume d'offres total par industrie pour une langue donnée.
+
+* **Insight :** Identifie les secteurs "locomotives" de l'économie.
+
+![Modèle de données](./4.png)
+
+### ⏳ 5. Répartition par type d’emploi
+
+* **Visualisation :** Donut Chart (Graphique en anneau).
+
+* **Objectif :** Analyser la flexibilité contractuelle (CDI, CDD, Full-time).
+
+* **Insight :** Révèle la stabilité des emplois proposés. Un fort taux de "Full-time" indique une recherche de pérennité.
+
+![Modèle de données](./5.png)
+
+### 📍 6. Répartition par Zones et États
+
+* **Visualisation :** Bar Chart horizontal (Top 10 Zones).
+
+* **Objectif :** Cartographier les zones géographiques les plus dynamiques.
+
+* **Insight :** Crucial pour la mobilité. Permet de détecter les hubs de recrutement émergents.
+
+![Modèle de données](./6.png)
+
+### 💻 7. Indice de Flexibilité : Télétravail vs Sur Site
+
+* **Visualisation :** Donut Chart bicolore + KPI textuel.
+
+* **Objectif :** Mesurer la proportion d'offres en "Remote".
+
+* **Insight :** Évalue la modernité managériale d'un secteur. Le calcul automatique du pourcentage offre une lecture immédiate du niveau de flexibilité.
+
+![Modèle de données](./7.png)
 
 # 🛠️ Analyse des Défis et Solutions Apportées
 
@@ -1069,7 +1306,7 @@ Le passage des données brutes au dashboard décisionnel a révélé plusieurs d
 
 * **Problème** : Mélange de devises et cases vides rendant les moyennes salariales instables.
 
-* **Solution** : Filtrage strict sur la devise USD et utilisation de la clause HAVING COUNT(*) >= 3 pour n'afficher que les métiers ayant un échantillon représentatif.
+* **Solution** : Filtrage strict sur la devise USD et utilisation de la clause `HAVING COUNT(*) >= 3` pour n'afficher que les métiers ayant un échantillon représentatif.
 
 * **Impact** : Fiabilité des tendances de rémunération affichées dans le dashboard.
 
@@ -1081,11 +1318,11 @@ Le passage des données brutes au dashboard décisionnel a révélé plusieurs d
 
 * **Impact** : Justesse des statistiques de volume.
 
-## 8. Défi de la Scalabilité : Normalisation des Compétences (Skills)
+## 8. Défi de la Scalabilité : Normalisation des Compétences (`Skills`)
 
 * **Problème** : Les compétences sont stockées sous forme d'abréviations techniques (HCPR, PRJM).
 
-* **Solution Actuelle** : Structure CASE WHEN en SQL pour mapper manuellement une quarantaine d'abréviations vers leurs noms complets ("Project Management", etc.).
+* **Solution Actuelle** : Structure `CASE WHEN` en SQL pour mapper manuellement une quarantaine d'abréviations vers leurs noms complets ("Project Management", etc.).
 
 * **Préconisation "Expert"** : Pour passer à l'échelle industrielle, la solution serait de remplacer ce bloc par une table de correspondance (Mapping Table) externe reliée par un `JOIN`.
 
