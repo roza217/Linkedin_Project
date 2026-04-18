@@ -872,6 +872,10 @@ Ce modèle sépare clairement les **Faits** (les transactions mesurables, comme 
 
 Nous avons généré les tables analytiques pour répondre aux 5 questions stratégiques du projet, plus des analyses géographiques et organisationnelles supplémentaires.
 
+Ces analyses sont construites à partir du modèle en étoile (FACT + DIMENSIONS) dans la couche GOLD.
+
+L’objectif est de produire des indicateurs analytiques prêts pour la visualisation (Streamlit / BI).
+
 ```sql
 -------- Top 10 des titres de postes les plus publiés par industrie
 CREATE OR REPLACE TABLE LINKEDIN.GOLD.ANALYSE_JOBS_GLOBAL AS
@@ -1002,16 +1006,21 @@ GROUP BY 1, 2, 3;
 select * from LINKEDIN.GOLD.VIEW_ANALYSE_REMOTE;
 ```
 
-### 📈 Analyse 1 : Volume de postes par industrie
-### 💰 Analyse 2 : Top 10 des rémunérations
+### 🛠️ Note Technique sur la Devise :**
+* **Devise** : Une analyse exploratoire a confirmé que 'USD' est l'unique devise du dataset, éliminant le besoin de conversion.
 
-**🛠️ Note Technique sur la Devise :**
+* **Période** : Le filtre `f.pay_period = 'YEARLY'` est crucial. Il évite de comparer des salaires annuels avec des taux horaires (Hourly), ce qui fausserait gravement les moyennes.
 
-Bien que le script inclue un filtre explicite `f.currency = 'USD'`, une analyse exploratoire préalable de la table `SILVER.JOB_POSTINGS` a confirmé que le **Dollar Américain (USD)** est l'unique devise présente dans l'ensemble du dataset. Ce filtre fait donc office de garde-fou pour garantir l'intégrité des calculs de moyenne sans nécessiter de conversion monétaire complexe. 
+* **Représentativité** : La clause `HAVING COUNT(*) >= 3` garantit que le salaire affiché repose sur un échantillon statistiquement significatif.
 
-### 🏢 Analyse 3 & 4 : Répartition par Taille et Secteur
-### 🕒 Analyse 5 : Types d'emplois (Work Type)
-### 🌍 6. Analyses Supplémentaires (Géo & Remote)
+* L'utilisation de `SPLIT_PART` permet de normaliser les adresses complexes pour isoler la zone principale (souvent l'État), rendant la cartographie dans Streamlit plus cohérente.
+
+* La clause `QUALIFY` avec `ROW_NUMBER()` est une technique avancée qui permet de sélectionner uniquement le "Top 10" par catégorie sans avoir recours à des sous-requêtes complexes.
+
+* Utilisation de la moyenne arithmétique `(max + min) / 2` comme proxy du salaire.
+
+
+
 
 
 
