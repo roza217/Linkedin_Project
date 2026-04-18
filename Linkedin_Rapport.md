@@ -335,7 +335,7 @@ SELECT * FROM LINKEDIN.SILVER.JOB_POSTINGS ;
 
 **Note Technique**
 
-Une vérification a été notée concernant le champ company_name source qui semble contenir des identifiants numériques, d'où le cast en BIGINT pour assurer la cohérence des jointures avec la table des entreprises.
+Une vérification a été notée concernant le champ `company_name` source qui semble contenir des identifiants numériques, d'où le cast en **BIGINT** pour assurer la cohérence des jointures avec la table des entreprises.
 
 ### 3.2. Table `COMPANIES` (Référentiel Entreprises)
 
