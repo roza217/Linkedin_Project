@@ -37,7 +37,7 @@ URL = 's3://snowflake-lab-bucket/';
 Pour les fichiers au format CSV (Job Postings, Benefits, Employee Counts, Skills), nous avons créé des tables typées `STRING` en couche Bronze. Cela permet d'éviter les erreurs de rejet lors du chargement si certains formats de date ou de nombres sont incohérents.
 
 ```sql
--- creation de la table Jobs_posting
+-- creation de la table Job_postings
 CREATE TABLE IF NOT EXISTS LINKEDIN.BRONZE.JOB_POSTINGS
 (
     job_id STRING,
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS LINKEDIN.BRONZE.JOB_POSTINGS
 );
 
 -- charger les donnee dans la table
-COPY INTO LINKEDIN.BRONZE.JOBS_POSTING
+COPY INTO LINKEDIN.BRONZE.JOB_POSTINGS
 FROM @LINKEDIN_STAGE/job_postings.csv 
 FILE_FORMAT = (TYPE = 'CSV' SKIP_HEADER = 1 FIELD_OPTIONALLY_ENCLOSED_BY = '"');
 
@@ -1340,6 +1340,74 @@ Le passage des données brutes au dashboard décisionnel a révélé plusieurs d
 L'ensemble de ces correctifs techniques démontre que la valeur d'un projet Big Data ne réside pas dans la quantité de données collectées, mais dans la rigueur du traitement appliqué pour transformer un signal bruyant en une information stratégique fiable.
 
 
+ ### Reinitialiser le compte snowflake
+```sql
+-- Passage au rôle administrateur pour avoir tous les privilèges
+USE ROLE ACCOUNTADMIN;
+
+-- Utilisation de la base de données LinkedIn
+USE DATABASE LINKEDIN;
+
+-- *********************
+-- NETTOYAGE DU SCHÉMA BRONZE (Données brutes)
+-- *********************
+USE SCHEMA BRONZE;
+
+DROP TABLE IF EXISTS JOB_POSTINGS;
+DROP TABLE IF EXISTS BENEFITS;
+DROP TABLE IF EXISTS EMPLOYEE_COUNTS;
+DROP TABLE IF EXISTS JOB_SKILLS;
+DROP TABLE IF EXISTS COMPANIES;
+DROP TABLE IF EXISTS JOB_INDUSTRIES;
+DROP TABLE IF EXISTS COMPANY_SPECIALITIES;
+DROP TABLE IF EXISTS COMPANY_INDUSTRIES;
+DROP STAGE IF EXISTS linkedin_stage;
+
+-- *********************
+-- NETTOYAGE DU SCHÉMA SILVER (Données transformées)
+-- *********************
+USE SCHEMA SILVER;
+
+DROP TABLE IF EXISTS JOB_POSTINGS;
+DROP TABLE IF EXISTS COMPANIES;
+DROP TABLE IF EXISTS BENEFITS;
+DROP TABLE IF EXISTS EMPLOYEE_COUNTS;
+DROP TABLE IF EXISTS JOB_SKILLS;
+DROP TABLE IF EXISTS JOB_INDUSTRIES;
+DROP TABLE IF EXISTS COMPANY_SPECIALITIES;
+DROP TABLE IF EXISTS COMPANY_INDUSTRIES;
+
+-- *********************
+-- NETTOYAGE DU SCHÉMA GOLD (Données analytiques)
+-- *********************
+USE SCHEMA GOLD;
+
+-- Suppression des tables de dimensions et de faits
+DROP TABLE IF EXISTS DIM_JOB;
+DROP TABLE IF EXISTS DIM_COMPANY;
+DROP TABLE IF EXISTS DIM_INDUSTRY;
+DROP TABLE IF EXISTS FACT_JOB_POSTINGS;
+
+-- Suppression des tables d'analyse
+DROP TABLE IF EXISTS ANALYSE_JOBS_GLOBAL;
+DROP TABLE IF EXISTS ANALYSE_SALAIRES_TOP10;
+DROP TABLE IF EXISTS ANALYSE_COMPANY_SIZE;
+DROP TABLE IF EXISTS ANALYSE_REPARTITION_SECTEUR;
+DROP TABLE IF EXISTS ANALYSE_JOB_TYPE;
+
+-- Suppression des vues
+DROP VIEW IF EXISTS VIEW_ANALYSE_GEOGRAPHIQUE;
+DROP VIEW IF EXISTS VIEW_ANALYSE_REMOTE;
+
+-- *********************
+-- NETTOYAGE FINAL (Infrastructure)
+-- *********************
+-- Optionnel : Supprimer la base de données entière
+DROP DATABASE IF EXISTS LINKEDIN;
+
+-- Suppression du Warehouse spécifique créé pour le projet
+DROP WAREHOUSE IF EXISTS SMALL_COMPUTE_WH;
+```
 
 
 
